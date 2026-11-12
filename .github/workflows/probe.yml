@@ -1,0 +1,23 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    steps:
+      - name: sys
+        run: |
+          echo "nproc=$(nproc)"; free -m | head -2
+          docker --version 2>/dev/null || echo nodocker
+      - name: egress-direct
+        run: |
+          echo "ipify_direct=$(curl -s -m 10 https://api.ipify.org)"
+          echo "ifconfig_me=$(curl -s -m 10 https://ifconfig.me)"
+          echo "--- ip-api ---"
+          curl -s -m 10 "http://ip-api.com/json/?fields=status,country,isp,org,as,hosting,proxy,query" || echo FAIL
+      - name: egress-trace
+        run: curl -s -m 10 https://1.1.1.1/cdn-cgi/trace | grep -E '^ip=|^loc=|^warp=' || echo NO_TRACE
+      - name: gates
+        run: |
+          for u in https://huggingface.co/join https://app.koyeb.com/users/sign-up https://signup.oraclecloud.com https://fly.io/app/sign-up https://api.flop.network/health; do
+            printf '%-45s %s\n' "$u" "$(curl -s -m 12 -o /dev/null -w '%{http_code}' "$u")"
+          done
