@@ -1,0 +1,40 @@
+name: flop-watch
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+
+      - name: probe faucet + gateway
+        run: |
+          TS=$(date -u +%FT%TZ)
+          FH=$(curl -s -m 20 https://faucet.flop.network/health)
+          FS=$(echo "$FH" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('status'),d.get('connected'),d.get('freeBalanceRaw'))" 2>/dev/null || echo "parse_fail")
+          FUND=$(curl -s -m 60 -X POST -H 'content-type: application/json' \
+            -d '{"address":"5DywgQFfyyU1wDprFPjDV44GTDa9ETV36LLAMTV9nsKnYG9g"}' \
+            -w "|%{http_code}" https://faucet.flop.network/fund)
+          OFFER=$(curl -s -m 20 -w "|%{http_code}" "https://api.flop.network/v1/enroll/wallet/offer?purpose=hermes-tools-v1")
+          CAT=$(curl -s -m 20 "https://api.flop.network/v1/models?availability=supported" | head -c 120)
+          echo "{\"ts\":\"$TS\",\"faucet\":\"$FS\",\"fund\":\"$FUND\",\"offer\":\"$OFFER\",\"catalog\":\"$CAT\"}" >> history.jsonl
+          echo "$TS faucet=$FS"
+          echo "$TS fund=$FUND"
+          echo "$TS offer=$OFFER"
+
+      - name: commit
+        run: |
+          git config user.name "flop-watch"; git config user.email "watch@local"
+          git add history.jsonl
+          git commit -qm "probe $(date -u +%FT%TZ)" || echo "no change"
+          git push -q
