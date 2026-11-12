@@ -1,0 +1,51 @@
+name: flop-autofund
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fund:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: probe + autofund
+        run: |
+          TS=$(date -u +%FT%TZ)
+          ADDRS=$(cat addresses.txt | grep -v '^#' | grep -v '^$')
+
+          FS=$(curl -s -m 20 https://faucet.flop.network/health \
+               | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('status'),d.get('connected'))" 2>/dev/null || echo down)
+          OFFER=$(curl -s -o /dev/null -m 20 -w '%{http_code}' \
+               "https://api.flop.network/v1/enroll/wallet/offer?purpose=hermes-tools-v1")
+          echo "{\"ts\":\"$TS\",\"faucet\":\"$FS\",\"offer\":\"$OFFER\"}" >> history.jsonl
+
+          if [ "$OFFER" != "200" ]; then
+            echo "GATE_CLOSED offer=$OFFER — enrollment down, stop"
+            git config user.name bot; git config user.email b@l
+            git add history.jsonl; git commit -qm "probe $TS (gate closed)"; git push -q || true
+            exit 0
+          fi
+          echo "GATE_OPEN offer=200 — enrollment live, funding queue"
+
+          N=0; OK=0
+          for A in $ADDRS; do
+            N=$((N+1))
+            [ $N -gt 12 ] && break
+            R=$(curl -s -m 60 -X POST -H 'content-type: application/json' \
+                -d "{\"address\":\"$A\"}" -w "|%{http_code}" \
+                https://faucet.flop.network/fund)
+            CODE=${R##*|}
+            echo "{\"ts\":\"$TS\",\"addr\":\"$A\",\"code\":\"$CODE\",\"body\":$(echo "$R" | sed 's/|[0-9]*$//' | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()[:300]))')}" >> funded.jsonl
+            [ "$CODE" = "200" ] && OK=$((OK+1))
+            sleep 11
+          done
+          echo "FUNDED=$OK/$N"
+
+          git config user.name bot; git config user.email b@l
+          git add -A; git commit -qm "autofund $TS ok=$OK/$N"; git push -q || true
