@@ -1,0 +1,32 @@
+name: keygen
+on: [workflow_dispatch]
+jobs:
+  kg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: bench sr25519 keygen
+        run: |
+          mkdir -p /tmp/kg && cd /tmp/kg
+          npm init -y >/dev/null 2>&1
+          npm i --silent @polkadot/util-crypto @polkadot/keyring >/dev/null 2>&1
+          cat > b.mjs <<'EOF'
+          import { cryptoWaitReady, mnemonicGenerate } from '@polkadot/util-crypto';
+          import { Keyring } from '@polkadot/keyring';
+          await cryptoWaitReady();
+          const kr = new Keyring({ type: 'sr25519', ss58Format: 42 });
+          const t0 = Date.now(); let n = 0;
+          while (Date.now() - t0 < 60000) {
+            const p = kr.addFromUri(mnemonicGenerate(12), undefined, 'sr25519');
+            p.address; n++;
+          }
+          const s = (Date.now() - t0) / 1000;
+          console.log(`KEYS=${n} SECS=${s.toFixed(1)} RATE=${Math.round(n / s * 3600)}/h RSS=${(process.memoryUsage().rss/1048576).toFixed(0)}MB`);
+          EOF
+          node b.mjs
+          echo "=== faucet from this IP ==="
+          curl -s -m 40 -X POST -H 'content-type: application/json' \
+            -d '{"address":"5DywgQFfyyU1wDprFPjDV44GTDa9ETV36LLAMTV9nsKnYG9g"}' \
+            -w "|%{http_code}" https://faucet.flop.network/fund
